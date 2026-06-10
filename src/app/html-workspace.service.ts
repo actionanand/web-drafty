@@ -82,16 +82,34 @@ export class HtmlWorkspaceService {
 
     const htmlPath = this.getFilePath(htmlFile);
     const baseDirectory = this.getDirectoryPath(htmlPath);
-    const rawAssets = files
-      .filter((file) => file !== htmlFile)
-      .map((file) => this.toRawAsset(file, baseDirectory))
-      .filter((asset): asset is RawAsset => asset !== null);
+    const html = await this.readHtmlText(htmlFile);
+    const referencedPaths = this.collectReferencedPaths(html);
+    const rawAssets = this.filterProjectAssets(
+      files
+        .filter((file) => file !== htmlFile)
+        .map((file) => this.toRawAsset(file, baseDirectory))
+        .filter((asset): asset is RawAsset => asset !== null),
+      htmlPath,
+      referencedPaths,
+    );
 
     return {
       fileName: this.ensureHtmlFileName(this.basename(htmlPath)),
-      html: await this.readHtmlText(htmlFile),
+      html,
       assets: await this.createResourceAssets(rawAssets),
     };
+  }
+
+  hasHtmlFile(files: readonly File[]): boolean {
+    return this.pickHtmlFile(files) !== null;
+  }
+
+  async createAssetsFromFolder(files: readonly File[]): Promise<readonly ResourceAsset[]> {
+    const rawAssets = files
+      .map((file) => this.toRawAsset(file, ''))
+      .filter((asset): asset is RawAsset => asset !== null);
+
+    return this.createResourceAssets(rawAssets);
   }
 
   buildPreviewHtml(html: string, assets: readonly ResourceAsset[], editMode: boolean): string {
@@ -191,7 +209,7 @@ export class HtmlWorkspaceService {
     const previewUrls = new Map<string, string>();
 
     for (const asset of rawAssets) {
-      previewUrls.set(asset.path, this.createObjectUrl(asset.file));
+      previewUrls.set(asset.path, await this.fileToDataUri(asset.file));
     }
 
     const rewrittenAssets = await Promise.all(
@@ -208,7 +226,7 @@ export class HtmlWorkspaceService {
         const rewrittenCss = this.rewriteCssReferences(css, asset.path, (value, contextPath) =>
           this.resolvePreviewReference(value, contextPath, previewUrls),
         );
-        const previewUrl = this.createObjectUrl(new Blob([rewrittenCss], { type: 'text/css' }));
+        const previewUrl = await this.fileToDataUri(new Blob([rewrittenCss], { type: 'text/css' }));
 
         return {
           path: asset.path,
@@ -358,6 +376,18 @@ export class HtmlWorkspaceService {
       .join(', ');
   }
 
+  private srcsetReferences(srcset: string): readonly string[] {
+    return srcset
+      .split(',')
+      .map((candidate) => {
+        const trimmed = candidate.trim();
+        const separatorIndex = trimmed.search(/\s/);
+
+        return separatorIndex === -1 ? trimmed : trimmed.slice(0, separatorIndex);
+      })
+      .filter((url) => url.length > 0);
+  }
+
   private resolvePreviewReference(
     value: string,
     contextPath: string,
@@ -436,6 +466,94 @@ export class HtmlWorkspaceService {
     return map;
   }
 
+  private filterProjectAssets(
+    rawAssets: readonly RawAsset[],
+    htmlPath: string,
+    referencedPaths: ReadonlySet<string>,
+  ): readonly RawAsset[] {
+    const sidecarFolder = this.sidecarFolderForHtmlPath(htmlPath);
+    const sidecarAssets = rawAssets.filter((asset) => asset.path.startsWith(`${sidecarFolder}/`));
+
+    if (sidecarAssets.length > 0) {
+      return sidecarAssets;
+    }
+
+    if (referencedPaths.size === 0) {
+      return rawAssets;
+    }
+
+    return rawAssets.filter((asset) => referencedPaths.has(asset.path));
+  }
+
+  private collectReferencedPaths(html: string): ReadonlySet<string> {
+    const doc = this.parseHtml(html);
+    const references = new Set<string>();
+    const addReference = (value: string, contextPath = ''): void => {
+      const reference = this.resolveReferencePath(value, contextPath);
+
+      if (reference) {
+        references.add(reference.path);
+      }
+    };
+
+    const elements = Array.from(
+      doc.querySelectorAll<HTMLElement>('[src], [href], [poster], [style]'),
+    );
+
+    for (const element of elements) {
+      const src = element.getAttribute('src');
+      const href = element.getAttribute('href');
+      const poster = element.getAttribute('poster');
+      const style = element.getAttribute('style');
+
+      if (src) {
+        addReference(src);
+      }
+
+      if (href) {
+        addReference(href);
+      }
+
+      if (poster) {
+        addReference(poster);
+      }
+
+      if (style) {
+        this.collectCssReferences(style, '', addReference);
+      }
+    }
+
+    const srcsetElements = Array.from(
+      doc.querySelectorAll<HTMLImageElement | HTMLSourceElement>('[srcset]'),
+    );
+    for (const element of srcsetElements) {
+      const srcset = element.getAttribute('srcset');
+
+      if (srcset) {
+        for (const reference of this.srcsetReferences(srcset)) {
+          addReference(reference);
+        }
+      }
+    }
+
+    const styles = Array.from(doc.querySelectorAll<HTMLStyleElement>('style'));
+    for (const style of styles) {
+      this.collectCssReferences(style.textContent ?? '', '', addReference);
+    }
+
+    return references;
+  }
+
+  private collectCssReferences(
+    css: string,
+    contextPath: string,
+    addReference: (value: string, contextPath: string) => void,
+  ): void {
+    for (const match of css.matchAll(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi)) {
+      addReference(match[2].trim(), contextPath);
+    }
+  }
+
   private async createDataUriMap(
     assets: readonly ResourceAsset[],
   ): Promise<ReadonlyMap<string, string>> {
@@ -450,7 +568,7 @@ export class HtmlWorkspaceService {
     return map;
   }
 
-  private fileToDataUri(file: File): Promise<string> {
+  private fileToDataUri(file: Blob): Promise<string> {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
 
@@ -644,15 +762,31 @@ export class HtmlWorkspaceService {
     const htmlFiles = files
       .filter((file) => this.isHtmlPath(this.getFilePath(file)))
       .sort((left, right) => {
+        const leftScore = this.htmlFileScore(left, files);
+        const rightScore = this.htmlFileScore(right, files);
         const leftDepth = this.getFilePath(left).split('/').length;
         const rightDepth = this.getFilePath(right).split('/').length;
 
         return (
-          leftDepth - rightDepth || this.getFilePath(left).localeCompare(this.getFilePath(right))
+          rightScore - leftScore ||
+          leftDepth - rightDepth ||
+          this.getFilePath(left).localeCompare(this.getFilePath(right))
         );
       });
 
     return htmlFiles[0] ?? null;
+  }
+
+  private htmlFileScore(htmlFile: File, files: readonly File[]): number {
+    const htmlPath = this.getFilePath(htmlFile);
+    const htmlDirectory = this.getDirectoryPath(htmlPath);
+    const sidecarFolder = this.sidecarFolderForHtmlPath(htmlPath);
+    const sidecarPrefix = htmlDirectory
+      ? `${htmlDirectory}/${sidecarFolder}/`
+      : `${sidecarFolder}/`;
+    const hasSidecar = files.some((file) => this.getFilePath(file).startsWith(sidecarPrefix));
+
+    return hasSidecar ? 1 : 0;
   }
 
   private getFilePath(file: File): string {
@@ -699,6 +833,10 @@ export class HtmlWorkspaceService {
     const lastSlash = normalizedPath.lastIndexOf('/');
 
     return lastSlash === -1 ? normalizedPath : normalizedPath.slice(lastSlash + 1);
+  }
+
+  private sidecarFolderForHtmlPath(path: string): string {
+    return this.basename(path).replace(/\.html?$/i, '_files');
   }
 
   private isHtmlPath(path: string): boolean {

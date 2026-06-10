@@ -75,6 +75,7 @@ export class App implements AfterViewInit, OnDestroy {
   protected readonly statusMessage = signal('Ready');
   protected readonly isBusy = signal(false);
   protected readonly editMode = signal(true);
+  protected readonly htmlPaneFolded = signal(false);
   protected readonly textEditDraft = signal<TextEditDraft | null>(null);
   private readonly previewSource = computed(() =>
     this.workspace.buildPreviewHtml(this.htmlSource(), this.assets(), this.editMode()),
@@ -132,10 +133,20 @@ export class App implements AfterViewInit, OnDestroy {
     }
 
     await this.runTask(async () => {
+      if (this.workspace.hasHtmlFile(files)) {
+        this.workspace.releasePreviewUrls();
+        const project = await this.workspace.createProjectFromFolder(files);
+        this.loadProject(project.fileName, project.html, project.assets);
+        this.statusMessage.set(`Opened ${project.fileName} with ${project.assets.length} assets`);
+        return;
+      }
+
       this.workspace.releasePreviewUrls();
-      const project = await this.workspace.createProjectFromFolder(files);
-      this.loadProject(project.fileName, project.html, project.assets);
-      this.statusMessage.set(`Opened ${project.fileName} with ${project.assets.length} assets`);
+      this.assets.set([]);
+      const assets = await this.workspace.createAssetsFromFolder(files);
+      this.assets.set(assets);
+      this.textEditDraft.set(null);
+      this.statusMessage.set(`Loaded ${assets.length} assets for ${this.fileName()}`);
     });
     this.resetInput(event);
   }
@@ -170,6 +181,17 @@ export class App implements AfterViewInit, OnDestroy {
 
   protected assetTrackBy(_index: number, asset: ResourceAsset): string {
     return asset.path;
+  }
+
+  protected toggleHtmlPane(): void {
+    this.htmlPaneFolded.update((isFolded) => !isFolded);
+    this.statusMessage.set(this.htmlPaneFolded() ? 'HTML editor hidden' : 'HTML editor visible');
+
+    if (!this.htmlPaneFolded()) {
+      window.setTimeout(() => {
+        this.editorView?.requestMeasure();
+      }, 0);
+    }
   }
 
   protected toggleEditMode(): void {

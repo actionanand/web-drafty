@@ -40,8 +40,13 @@
   </div>
 </header>
 
-<main class="workspace">
-  <section class="editor-pane" aria-labelledby="editor-title">
+<main class="workspace" [class.workspace-html-folded]="htmlPaneFolded()">
+  <section
+    class="editor-pane"
+    [class.editor-pane-folded]="htmlPaneFolded()"
+    [attr.aria-hidden]="htmlPaneFolded()"
+    aria-labelledby="editor-title"
+  >
     <div class="pane-header">
       <div>
         <h2 id="editor-title">HTML</h2>
@@ -50,7 +55,10 @@
           <input type="text" [value]="fileName()" (input)="updateFileName($event)" />
         </label>
       </div>
-      <span class="asset-count">{{ assetCount() }} assets</span>
+      <div class="pane-tools">
+        <span class="asset-count">{{ assetCount() }} assets</span>
+        <button type="button" class="fold-button" (click)="toggleHtmlPane()">Fold HTML</button>
+      </div>
     </div>
 
     <div #editorHost class="editor-host" aria-label="HTML editor"></div>
@@ -72,15 +80,20 @@
         <h2 id="preview-title">Preview</h2>
         <p aria-live="polite">{{ statusMessage() }}</p>
       </div>
-      <button
-        type="button"
-        class="edit-mode-button"
-        [class.edit-mode-button-active]="editMode()"
-        [attr.aria-pressed]="editMode()"
-        (click)="toggleEditMode()"
-      >
-        Edit preview
-      </button>
+      <div class="pane-tools">
+        @if (htmlPaneFolded()) {
+          <button type="button" class="fold-button" (click)="toggleHtmlPane()">Show HTML</button>
+        }
+        <button
+          type="button"
+          class="edit-mode-button"
+          [class.edit-mode-button-active]="editMode()"
+          [attr.aria-pressed]="editMode()"
+          (click)="toggleEditMode()"
+        >
+          Edit preview
+        </button>
+      </div>
     </div>
 
     <iframe
