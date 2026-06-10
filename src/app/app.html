@@ -1,3 +1,83 @@
-<div>WebDrafty App</div>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">W</span>
+    <div>
+      <h1>WebDrafty</h1>
+      <p>{{ documentStats() }}</p>
+    </div>
+  </div>
 
-<router-outlet />
+  <div class="actions" aria-label="Document actions">
+    <input
+      #htmlInput
+      class="visually-hidden"
+      type="file"
+      accept=".html,.htm,text/html"
+      (change)="openHtmlFile($event)"
+    />
+    <input
+      #folderInput
+      class="visually-hidden"
+      type="file"
+      accept=".html,.htm,text/html,*/*"
+      multiple
+      webkitdirectory
+      (change)="openHtmlFolder($event)"
+    />
+
+    <button type="button" class="ghost-button" [disabled]="isBusy()" (click)="htmlInput.click()">
+      Open HTML
+    </button>
+    <button type="button" class="ghost-button" [disabled]="isBusy()" (click)="folderInput.click()">
+      Open folder
+    </button>
+    <button type="button" class="primary-button" [disabled]="isBusy()" (click)="saveSingleHtml()">
+      Save single HTML
+    </button>
+    <button type="button" class="secondary-button" [disabled]="isBusy()" (click)="saveFolderZip()">
+      Save folder ZIP
+    </button>
+  </div>
+</header>
+
+<main class="workspace">
+  <section class="editor-pane" aria-labelledby="editor-title">
+    <div class="pane-header">
+      <div>
+        <h2 id="editor-title">HTML</h2>
+        <label class="file-name-field">
+          <span>File</span>
+          <input type="text" [value]="fileName()" (input)="updateFileName($event)" />
+        </label>
+      </div>
+      <span class="asset-count">{{ assetCount() }} assets</span>
+    </div>
+
+    <div #editorHost class="editor-host" aria-label="HTML editor"></div>
+
+    <aside class="asset-strip" aria-label="Loaded assets">
+      @if (assets().length > 0) {
+        @for (asset of assets(); track asset.path) {
+          <span class="asset-pill">{{ asset.path }}</span>
+        }
+      } @else {
+        <span class="asset-empty">No assets loaded</span>
+      }
+    </aside>
+  </section>
+
+  <section class="preview-pane" aria-labelledby="preview-title">
+    <div class="pane-header">
+      <div>
+        <h2 id="preview-title">Preview</h2>
+        <p aria-live="polite">{{ statusMessage() }}</p>
+      </div>
+    </div>
+
+    <iframe
+      title="Live webpage preview"
+      sandbox="allow-forms allow-modals allow-popups allow-scripts"
+      [srcdoc]="previewHtml()"
+    ></iframe>
+  </section>
+</main>
