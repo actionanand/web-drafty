@@ -72,6 +72,15 @@
         <h2 id="preview-title">Preview</h2>
         <p aria-live="polite">{{ statusMessage() }}</p>
       </div>
+      <button
+        type="button"
+        class="edit-mode-button"
+        [class.edit-mode-button-active]="editMode()"
+        [attr.aria-pressed]="editMode()"
+        (click)="toggleEditMode()"
+      >
+        Edit preview
+      </button>
     </div>
 
     <iframe
@@ -81,3 +90,35 @@
     ></iframe>
   </section>
 </main>
+
+@if (textEditDraft(); as draft) {
+  <div class="dialog-backdrop" role="presentation">
+    <section
+      class="text-edit-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="text-edit-title"
+    >
+      <div>
+        <h2 id="text-edit-title">Edit Text</h2>
+        <p>Update the selected text in the HTML source.</p>
+      </div>
+
+      <label class="text-edit-field">
+        <span>Selected text</span>
+        <textarea
+          #textEditInput
+          rows="5"
+          [value]="draft.value"
+          (input)="updateTextEditValue($event)"
+          (keydown.escape)="cancelTextEdit()"
+        ></textarea>
+      </label>
+
+      <div class="dialog-actions">
+        <button type="button" class="ghost-button" (click)="cancelTextEdit()">Cancel</button>
+        <button type="button" class="primary-button" (click)="applyTextEdit()">Apply</button>
+      </div>
+    </section>
+  </div>
+}

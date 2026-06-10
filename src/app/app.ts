@@ -37,7 +37,17 @@ import {
   lineNumbers,
   placeholder,
 } from '@codemirror/view';
-import { HtmlWorkspaceService, ResourceAsset } from './html-workspace.service';
+import {
+  HtmlWorkspaceService,
+  PreviewTextEditRequest,
+  ResourceAsset,
+} from './html-workspace.service';
+
+interface TextEditDraft {
+  readonly path: readonly number[];
+  readonly originalValue: string;
+  readonly value: string;
+}
 
 @Component({
   selector: 'app-root',
@@ -53,15 +63,21 @@ export class App implements AfterViewInit, OnDestroy {
   private readonly workspace = inject(HtmlWorkspaceService);
   private readonly sanitizer = inject(DomSanitizer);
   private readonly editorHost = viewChild.required<ElementRef<HTMLElement>>('editorHost');
+  private readonly textEditInput = viewChild<ElementRef<HTMLTextAreaElement>>('textEditInput');
   private editorView: EditorView | null = null;
+  private readonly handlePreviewMessage = (event: MessageEvent<unknown>): void => {
+    this.receivePreviewMessage(event);
+  };
 
   protected readonly fileName = signal('index.html');
   protected readonly htmlSource = signal(this.workspace.starterHtml);
   protected readonly assets = signal<readonly ResourceAsset[]>([]);
   protected readonly statusMessage = signal('Ready');
   protected readonly isBusy = signal(false);
+  protected readonly editMode = signal(true);
+  protected readonly textEditDraft = signal<TextEditDraft | null>(null);
   private readonly previewSource = computed(() =>
-    this.workspace.buildPreviewHtml(this.htmlSource(), this.assets()),
+    this.workspace.buildPreviewHtml(this.htmlSource(), this.assets(), this.editMode()),
   );
   protected readonly previewHtml = computed<SafeHtml>(() =>
     this.sanitizer.bypassSecurityTrustHtml(this.previewSource()),
@@ -76,6 +92,7 @@ export class App implements AfterViewInit, OnDestroy {
   });
 
   ngAfterViewInit(): void {
+    window.addEventListener('message', this.handlePreviewMessage);
     this.editorView = new EditorView({
       parent: this.editorHost().nativeElement,
       state: EditorState.create({
@@ -86,6 +103,7 @@ export class App implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    window.removeEventListener('message', this.handlePreviewMessage);
     this.editorView?.destroy();
     this.workspace.releasePreviewUrls();
   }
@@ -152,6 +170,52 @@ export class App implements AfterViewInit, OnDestroy {
 
   protected assetTrackBy(_index: number, asset: ResourceAsset): string {
     return asset.path;
+  }
+
+  protected toggleEditMode(): void {
+    this.editMode.update((isEnabled) => !isEnabled);
+    this.textEditDraft.set(null);
+    this.statusMessage.set(
+      this.editMode() ? 'Edit mode on: double-click or right-click preview text' : 'Edit mode off',
+    );
+  }
+
+  protected updateTextEditValue(event: Event): void {
+    const input = event.target as HTMLTextAreaElement;
+    const draft = this.textEditDraft();
+
+    if (!draft) {
+      return;
+    }
+
+    this.textEditDraft.set({
+      ...draft,
+      value: input.value,
+    });
+  }
+
+  protected applyTextEdit(): void {
+    const draft = this.textEditDraft();
+
+    if (!draft) {
+      return;
+    }
+
+    try {
+      const html = this.workspace.replaceTextAtPath(this.htmlSource(), draft.path, draft.value);
+      this.setHtmlSource(html);
+      this.textEditDraft.set(null);
+      this.statusMessage.set('Preview text updated');
+    } catch (error: unknown) {
+      this.statusMessage.set(
+        error instanceof Error ? error.message : 'Unable to update that text.',
+      );
+    }
+  }
+
+  protected cancelTextEdit(): void {
+    this.textEditDraft.set(null);
+    this.statusMessage.set('Text edit cancelled');
   }
 
   private editorExtensions(): Extension[] {
@@ -222,6 +286,11 @@ export class App implements AfterViewInit, OnDestroy {
   private loadProject(fileName: string, html: string, assets: readonly ResourceAsset[]): void {
     this.fileName.set(fileName);
     this.assets.set(assets);
+    this.setHtmlSource(html);
+    this.textEditDraft.set(null);
+  }
+
+  private setHtmlSource(html: string): void {
     this.htmlSource.set(html);
 
     if (this.editorView) {
@@ -233,6 +302,38 @@ export class App implements AfterViewInit, OnDestroy {
         },
       });
     }
+  }
+
+  private receivePreviewMessage(event: MessageEvent<unknown>): void {
+    if (!this.editMode() || !this.isPreviewTextEditRequest(event.data)) {
+      return;
+    }
+
+    this.textEditDraft.set({
+      path: event.data.path,
+      originalValue: event.data.value,
+      value: event.data.value,
+    });
+    this.statusMessage.set('Editing preview text');
+    window.setTimeout(() => {
+      this.textEditInput()?.nativeElement.focus();
+    }, 0);
+  }
+
+  private isPreviewTextEditRequest(value: unknown): value is PreviewTextEditRequest {
+    if (!value || typeof value !== 'object') {
+      return false;
+    }
+
+    const message = value as Partial<PreviewTextEditRequest>;
+
+    return (
+      message.source === 'web-drafty-preview' &&
+      message.type === 'edit-text' &&
+      Array.isArray(message.path) &&
+      message.path.every((item) => Number.isInteger(item) && item >= 0) &&
+      typeof message.value === 'string'
+    );
   }
 
   private async runTask(task: () => Promise<void>): Promise<void> {

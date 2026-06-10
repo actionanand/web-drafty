@@ -13,6 +13,13 @@ export interface HtmlProject {
   readonly assets: readonly ResourceAsset[];
 }
 
+export interface PreviewTextEditRequest {
+  readonly source: 'web-drafty-preview';
+  readonly type: 'edit-text';
+  readonly path: readonly number[];
+  readonly value: string;
+}
+
 interface RawAsset {
   readonly path: string;
   readonly file: File;
@@ -87,9 +94,9 @@ export class HtmlWorkspaceService {
     };
   }
 
-  buildPreviewHtml(html: string, assets: readonly ResourceAsset[]): string {
+  buildPreviewHtml(html: string, assets: readonly ResourceAsset[], editMode: boolean): string {
     if (assets.length === 0) {
-      return html;
+      return editMode ? this.injectPreviewEditor(html) : html;
     }
 
     const doc = this.parseHtml(html);
@@ -104,7 +111,8 @@ export class HtmlWorkspaceService {
       ),
     );
 
-    return this.serializeHtml(doc);
+    const previewHtml = this.serializeHtml(doc);
+    return editMode ? this.injectPreviewEditor(previewHtml) : previewHtml;
   }
 
   async buildSingleFileHtml(html: string, assets: readonly ResourceAsset[]): Promise<string> {
@@ -162,6 +170,19 @@ export class HtmlWorkspaceService {
 
   zipFileName(fileName: string): string {
     return this.ensureHtmlFileName(fileName).replace(/\.html?$/i, '.zip');
+  }
+
+  replaceTextAtPath(html: string, path: readonly number[], value: string): string {
+    const doc = this.parseHtml(html);
+    const node = this.findNodeAtPath(doc, path);
+
+    if (!node || node.nodeType !== Node.TEXT_NODE) {
+      throw new Error('That text could not be mapped back to the HTML source.');
+    }
+
+    node.textContent = value;
+
+    return this.serializeHtml(doc);
   }
 
   private async createResourceAssets(
@@ -473,6 +494,136 @@ export class HtmlWorkspaceService {
 
   private isUtf8Encoding(encoding: string): boolean {
     return /^utf-?8$/i.test(encoding.trim());
+  }
+
+  private findNodeAtPath(doc: Document, path: readonly number[]): Node | null {
+    let node: Node = doc;
+
+    for (const index of path) {
+      const child = node.childNodes.item(index);
+
+      if (!child) {
+        return null;
+      }
+
+      node = child;
+    }
+
+    return node;
+  }
+
+  private injectPreviewEditor(html: string): string {
+    const bridge = this.previewEditorBridge();
+
+    if (/<\/body\s*>/i.test(html)) {
+      return html.replace(/<\/body\s*>/i, `${bridge}</body>`);
+    }
+
+    return `${html}${bridge}`;
+  }
+
+  private previewEditorBridge(): string {
+    return `<script>
+(function () {
+  var source = 'web-drafty-preview';
+  var skipTags = {
+    SCRIPT: true,
+    STYLE: true,
+    TEXTAREA: true,
+    INPUT: true,
+    SELECT: true,
+    OPTION: true,
+    NOSCRIPT: true
+  };
+
+  function isEditableTextNode(node) {
+    return node && node.nodeType === Node.TEXT_NODE && node.data.trim().length > 0;
+  }
+
+  function firstEditableTextNode(root) {
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    var node = walker.nextNode();
+
+    while (node) {
+      if (isEditableTextNode(node)) {
+        return node;
+      }
+
+      node = walker.nextNode();
+    }
+
+    return null;
+  }
+
+  function textNodeFromPoint(event) {
+    var target = event.target;
+
+    if (!target || skipTags[target.tagName]) {
+      return null;
+    }
+
+    if (document.caretPositionFromPoint) {
+      var position = document.caretPositionFromPoint(event.clientX, event.clientY);
+
+      if (position && isEditableTextNode(position.offsetNode)) {
+        return position.offsetNode;
+      }
+    }
+
+    if (document.caretRangeFromPoint) {
+      var range = document.caretRangeFromPoint(event.clientX, event.clientY);
+
+      if (range && isEditableTextNode(range.startContainer)) {
+        return range.startContainer;
+      }
+    }
+
+    return firstEditableTextNode(target);
+  }
+
+  function pathForNode(node) {
+    var path = [];
+
+    while (node && node !== document) {
+      var parent = node.parentNode;
+
+      if (!parent) {
+        return [];
+      }
+
+      path.unshift(Array.prototype.indexOf.call(parent.childNodes, node));
+      node = parent;
+    }
+
+    return path;
+  }
+
+  function requestTextEdit(event) {
+    var node = textNodeFromPoint(event);
+
+    if (!node) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    parent.postMessage(
+      {
+        source: source,
+        type: 'edit-text',
+        path: pathForNode(node),
+        value: node.data
+      },
+      '*'
+    );
+  }
+
+  document.addEventListener('dblclick', requestTextEdit, true);
+  document.addEventListener('contextmenu', requestTextEdit, true);
+  document.documentElement.style.cursor = 'text';
+})();
+</script>`;
   }
 
   private toRawAsset(file: File, baseDirectory: string): RawAsset | null {
