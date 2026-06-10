@@ -1,0 +1,63 @@
+{
+  "name": "web-drafty",
+  "version": "0.0.0",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "develop": "ng serve --port 4313",
+    "build": "ng build",
+    "build:gh": "ng build --base-href /web-drafty/",
+    "watch": "ng build --watch --configuration development",
+    "copy-error-page": "cp dist/web-drafty/browser/index.html dist/web-drafty/browser/404.html",
+    "test": "ng test",
+    "precommit": "run-s format:fix lint",
+    "precommit:dummy": "echo 'This is a dummy print message!'",
+    "format:fix": "pretty-quick --staged",
+    "format:check": "prettier --config ./.prettierrc --list-different \"src/{app,environments,assets}/**/*{.ts,.js,.json,.css,.scss}\"",
+    "format:all": "prettier --config ./.prettierrc --write \"src/{app,environments,assets}/**/*{.ts,.js,.json,.css,.scss}\"",
+    "lint": "ng lint",
+    "prepare": "husky"
+  },
+  "prettier": {
+    "printWidth": 100,
+    "singleQuote": true,
+    "overrides": [
+      {
+        "files": "*.html",
+        "options": {
+          "parser": "angular"
+        }
+      }
+    ]
+  },
+  "private": true,
+  "packageManager": "npm@11.6.2",
+  "dependencies": {
+    "@angular/common": "^21.2.12",
+    "@angular/compiler": "^21.2.12",
+    "@angular/core": "^21.2.12",
+    "@angular/forms": "^21.2.12",
+    "@angular/platform-browser": "^21.2.12",
+    "@angular/router": "^21.2.12",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^21.2.11",
+    "@angular/cli": "^21.2.11",
+    "@angular/compiler-cli": "^21.2.12",
+    "angular-eslint": "21.4.0",
+    "eslint": "^9.39.1",
+    "husky": "^9.1.7",
+    "jsdom": "^27.1.0",
+    "npm-run-all": "^4.1.5",
+    "prettier": "^3.7.4",
+    "pretty-quick": "^4.2.2",
+    "typescript": "~5.9.2",
+    "typescript-eslint": "8.47.0",
+    "vitest": "^4.0.8"
+  },
+  "engines": {
+    "node": "^20.19.0 || ^22.12.0 || ^24.0.0"
+  }
+}
